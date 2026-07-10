@@ -57,26 +57,52 @@ tracking, no notifications). Everything else hangs off this proven pipe.
 
 In priority order — pull in only after the skeleton and core search/list work:
 
-1. **Accounts** — register / log in (BCrypt hash, simplest session). Brutally scoped: no
-   "remember me", no email verification. Enables tracking. First stretch because it adds forms —
-   real frontend reps.
-2. **Track** — add/remove a media_item to a user's tracks; view "my tracks".
-3. **Media detail page** — description, assets (images/trailers), clickable tags → tag page
+1. **FastAPI notification service** — a Python/FastAPI worker that owns a *distinct* job:
+   scheduled email on release day. It reads `track` rows where `release_date == today` and
+   `is_notified == false`, emails those users, and flips the flag. It does **not** re-serve
+   Spring's endpoints — it's a separate service meeting Spring only at Postgres (or via an
+   internal call). This is the legitimate polyglot pattern (see rationale below) and gives real
+   FastAPI reps, which the job interview specifically tests. Top stretch for that reason.
+2. **Accounts** — register / log in (BCrypt hash, simplest session). Brutally scoped: no
+   "remember me", no email verification. Enables tracking. Adds forms — real frontend reps.
+3. **Track** — add/remove a media_item to a user's tracks; view "my tracks".
+4. **Media detail page** — description, assets (images/trailers), clickable tags → tag page
    listing all media sharing that tag.
-4. **Notifications** — scheduled/background job that emails users on an item's release date;
-   flips `track.is_notified`.
+5. **(far tail) FastAPI scraper service** — a second Python/FastAPI service ingesting release
+   data from external APIs into Postgres. Only if the spine + notification service are done with
+   time to spare. If built, add **outbound rate limiting** (throttle our calls to external APIs,
+   respect their 429s — `httpx` + token bucket / `asyncio.Semaphore` or `slowapi`) *if* it's
+   low-effort; it's the authentic place to demonstrate rate limiting for the interview.
 
-The catalog is seeded with hand-written fixture data — no scraper in scope.
+The catalog is seeded with hand-written fixture data — the scraper is a far-tail stretch, not
+core.
 
-## Out of scope (and why)
+### Rate limiting — a feature, not a service
 
-- **FastAPI / Python service** — cut. Running FastAPI alongside Spring Boot to serve the same
-  REST API is an anti-pattern: duplicated routing/logic, two runtimes to deploy, no capability
-  gained. FastAPI would only earn a place doing a *different* job (e.g. a scraper), and scraping
-  is not in scope. Release Radar is **one backend: Spring + Postgres**.
-- The job's desire for Python/FastAPI experience is a **separate learning goal** — satisfy it
-  with a small standalone FastAPI exercise, not by wedging a second backend into this app. The
-  point of this week is the **web frontend**; two backends would steal that time.
+- **Outbound** (scraper being polite to external APIs) → lives *inside* the scraper. See stretch
+  #5. Good, authentic demo; optional even within that far-tail stretch.
+- **Inbound** (protect our own API) → guards the *Spring* user-facing endpoints, so it belongs in
+  Spring (a filter) or a gateway in front of it — **not** a FastAPI service. A FastAPI gateway
+  just to throttle Spring is overkill for a solo app and edges toward the pass-through
+  anti-pattern. Out of scope.
+
+## Polyglot rule — where FastAPI is (and isn't) allowed
+
+FastAPI is included **only** for a job Spring shouldn't own. The rule, drawn from a reference
+microservices repo (`contract-payment-flow`: Spring gateway + Spring domain services +
+FastAPI `ai-orchestrator`, routed by path):
+
+- ✅ **Allowed:** FastAPI as a *separate service* with its own responsibility (notifications,
+  scraping/ingestion, an AI/RAG slice). Services meet at the database or through an internal
+  HTTP call. Each language does what it's best at.
+- ❌ **Not allowed:** FastAPI serving the *same* `/api/media` endpoints Spring already serves.
+  Two web frameworks for one API = duplicated routing/logic, two runtimes, zero capability
+  gained. An interviewer would flag it.
+
+**Sequencing guard:** Spring + Postgres + React spine ships first. FastAPI is stretch, added only
+once the spine works. The week's primary gap is the **web frontend** — the FastAPI service must
+not steal frontend time. Adding it shifts the sprint's emphasis (frontend-only → frontend + a
+real FastAPI service); flag this to the instructor.
 
 ## Next step
 

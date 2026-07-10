@@ -48,10 +48,29 @@ Key design decisions:
 - **Database:** PostgreSQL
 - **Frontend:** built in two stages — (1) plain JS/HTML/CSS + `fetch` to prove the fundamentals,
   then (2) React
-- **One backend, on purpose:** Spring + Postgres only. FastAPI is deliberately *not* used — a
-  second web framework serving the same API adds no capability, only duplication. Python/FastAPI
-  practice, if wanted, is a separate standalone exercise.
-- **Stretch:** auth; tracking; media detail page; notifications
+- **Notification service (stretch):** Python + FastAPI, as a *separate* service doing a distinct
+  job (scheduled release-day email) — **not** a second framework re-serving Spring's endpoints.
+  Polyglot microservice pattern; also the FastAPI reps the job interview tests.
+- **Scraper service (extremely-unlikely stretch):** a second Python/FastAPI service that ingests
+  release data from external APIs into Postgres. Only if the whole spine + notification service
+  are done with time to spare.
+- **Stretch (ranked):** FastAPI notification service; auth; tracking; media detail page;
+  *(far tail)* FastAPI scraper service.
+
+### On rate limiting
+
+Rate limiting is a **feature**, not a service — it lives where the traffic is, not in a box of
+its own.
+
+- **Outbound (scraper being polite):** throttle the scraper's own calls to external APIs so we
+  respect their limits and 429s (e.g. `httpx` + a token bucket / `asyncio.Semaphore`, or
+  `slowapi`). This is the good, authentic place to *demonstrate* rate limiting for the interview.
+  If we build the scraper and this turns out to be low-effort, add it there. Optional-within-a-
+  far-tail-stretch — nice-to-have, never a blocker.
+- **Inbound (protect our own API):** would guard the *Spring* user-facing endpoints, so it
+  belongs in Spring (a filter) or a gateway in front of it — **not** in a FastAPI service.
+  Standing up a FastAPI gateway just to throttle Spring is overkill for a solo app and edges
+  toward the pass-through anti-pattern. Out of scope.
 
 ## Goals
 
