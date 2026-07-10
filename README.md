@@ -48,7 +48,29 @@ Key design decisions:
 - **Database:** PostgreSQL
 - **Frontend:** built in two stages — (1) plain JS/HTML/CSS + `fetch` to prove the fundamentals,
   then (2) React
-- **Stretch:** a Python + FastAPI service for scraping/ingesting release data; auth; notifications
+- **Notification service (stretch):** Python + FastAPI, as a *separate* service doing a distinct
+  job (scheduled release-day email) — **not** a second framework re-serving Spring's endpoints.
+  Polyglot microservice pattern; also the FastAPI reps the job interview tests.
+- **Scraper service (extremely-unlikely stretch):** a second Python/FastAPI service that ingests
+  release data from external APIs into Postgres. Only if the whole spine + notification service
+  are done with time to spare.
+- **Stretch (ranked):** FastAPI notification service; auth; tracking; media detail page;
+  *(far tail)* FastAPI scraper service.
+
+### On rate limiting
+
+Rate limiting is a **feature**, not a service — it lives where the traffic is, not in a box of
+its own.
+
+- **Outbound (scraper being polite):** throttle the scraper's own calls to external APIs so we
+  respect their limits and 429s (e.g. `httpx` + a token bucket / `asyncio.Semaphore`, or
+  `slowapi`). This is the good, authentic place to *demonstrate* rate limiting for the interview.
+  If we build the scraper and this turns out to be low-effort, add it there. Optional-within-a-
+  far-tail-stretch — nice-to-have, never a blocker.
+- **Inbound (protect our own API):** would guard the *Spring* user-facing endpoints, so it
+  belongs in Spring (a filter) or a gateway in front of it — **not** in a FastAPI service.
+  Standing up a FastAPI gateway just to throttle Spring is overkill for a solo app and edges
+  toward the pass-through anti-pattern. Out of scope.
 
 ## Goals
 
@@ -62,17 +84,83 @@ Key design decisions:
 
 - `docs/` — sprint guide, prompts (phases 0–4), ERD, candidate reports
 - `docs/erd.dbml`, `docs/erd.png` — the data model
-- (coming) backend, frontend, and `docker compose` to run the full stack locally
+- `backend/` — Spring Boot 3 REST API (Java 17, JPA, Flyway migrations)
+- `frontend/` — React + Vite web app (list / detail / form views)
+- `docker-compose.yml` — Postgres + backend + frontend, full stack in one command
+
+## Running the stack locally
+
+Prerequisites: Docker Desktop (with Docker Compose). Nothing else needs to be installed.
+
+```bash
+# from the repo root
+cp .env.example .env      # or keep the committed .env for local dev
+docker compose up --build
+```
+
+This starts three containers:
+
+| Service  | URL                         | Notes                                  |
+|----------|-----------------------------|----------------------------------------|
+| Postgres | `localhost:5432`            | db `release_radar`, user `radar`       |
+| Backend  | `http://localhost:8080`     | REST API under `/api`                  |
+| Frontend | `http://localhost:5173`     | React app                              |
+
+Flyway applies the schema (`V1__init.sql`) and seed data (`V2__seed.sql`) automatically on
+backend startup.
+
+Quick smoke checks:
+
+```bash
+# API — list media
+curl "http://localhost:8080/api/media"
+
+# API — one item
+curl "http://localhost:8080/api/media/1"
+```
+
+Then open the frontend at **http://localhost:5173**.
+
+To stop: `Ctrl+C`, then `docker compose down` (add `-v` to also wipe the database volume).
+
+### API surface (skeleton)
+
+| Method | Path                | Purpose                          |
+|--------|---------------------|----------------------------------|
+| GET    | `/api/media?q=&page=&size=` | search / list (walking skeleton) |
+| GET    | `/api/media/{id}`   | media detail                     |
+| POST   | `/api/media`        | create                           |
+| PUT    | `/api/media/{id}`   | update                           |
+| DELETE | `/api/media/{id}`   | delete                           |
+| GET    | `/api/tracks`       | list tracks                      |
 
 ## Status & next steps
 
-- [~] **Phase 1 — Explore:** *nearly done.* Data model designed and defended (ERD committed);
+- [x] **Phase 1 — Explore:** *done.* Data model designed and defended (ERD committed);
       [`SCOPE.md`](SCOPE.md) written (brief, entities, walking skeleton, ranked stretch).
   - [x] Walking skeleton defined: search query → `GET /api/media?q=` → Postgres → list renders.
   - [x] `SCOPE.md` written — Phase 2 reads this file.
   - [ ] Get scope signed off by instructor.
-- [ ] **Phase 2 — Scaffold:** stand up Spring Boot + Postgres skeleton wired to this schema,
-      seeded with intentional bugs to hunt
-- [ ] **Phase 3 — Build:** fix the bugs, build features (search → track → notify), frontend in
-      plain JS then React
-- [ ] **Phase 4 — Verify:** explain-to-commit review gate before each commit and end of each day
+- [x] **Phase 2 — Scaffold:** *done.* Full stack stands up with one `docker compose up --build`.
+  - [x] Postgres in Docker with real Flyway migrations (`V1__init.sql`) + seed (`V2__seed.sql`) —
+        8 tables (subset of the 14-table ERD): 1→M (`tv_series→season`, `media_item→media_asset`)
+        and M→M (`media_tag`, `track`).
+  - [x] Spring Boot 3 REST API (Java 17, JPA): `/api/media` search + CRUD (walking skeleton
+        `GET /api/media?q=`), `/api/tracks`.
+  - [x] React + Vite frontend: three routed views — list (search) → detail → create form, with
+        real state + `fetch`.
+  - [x] Wiring: CORS config, `.env` files, README run steps.
+  - [x] Verified reachable: `curl localhost:8080/api/media` returns data; frontend loads at
+        `localhost:5173`.
+  - [x] Intentional bugs seeded across every layer (DB, API, frontend, config) for Phase 3 —
+        deliberately not documented here.
+- [ ] **Phase 3 — Build:** hunt and fix the seeded bugs (candidate writes every fix), then build
+      features per the ranked stretch (accounts → track → detail/tags → notifications). Frontend
+      progression: plain JS/`fetch` first, then React.
+- [ ] **Phase 4 — Verify:** explain-to-commit review gate before each commit and end of each day.
+
+### Immediate next step
+
+Start Phase 3 bug hunt. Drive the running app with devtools **Console** + **Network** open,
+compare `curl` output to the seed data, and watch `docker compose logs backend` (SQL is logged).
+Report observations by category — the coach confirms and teaches; the candidate writes the fix.
